@@ -1,12 +1,16 @@
 //API should be enabled on project:
 //-------- gcloud services list --available ---------------
 
+//API [cloudresourcemanager.googleapis.com]
 //Identity and Access Management (IAM) API 
 //(gcloud services enable iamcredentials.googleapis.com, gcloud services enable iam.googleapis.com)
-//API [cloudresourcemanager.googleapis.com]
+
 //API Compute Engine API
 //API DNS api
-//API GKE containers (gcloud services enable container.googleapis.com)
+//API GKE containers             gcloud services enable container.googleapis.com
+//API Service Networking API     gcloud services enable servicenetworking.googleapis.com
+//Cloud SQL Admin API            gcloud services enable sqladmin.googleapis.com
+//API Memorystore for Redis API  gcloud services enable redis.googleapis.com
 
 
 //export GOOGLE_APPLICATION_CREDENTIALS={C:\Service\cloudx\cloudx-finaltask-3a66417d9198.json}
@@ -163,9 +167,28 @@ resource "google_container_node_pool" "primary_private_nodes" {
   }
 }
 
+//gcloud container cluster get-credentials cluster --region=us-central1
 
 
 //---------------------------- ### CLOUD SQL DATABSE MYSQL ### ------------------------------------//
+
+resource "google_compute_global_address" "private_ip_address" {
+  //provider = google-beta
+
+  name          = "private-ip-address"
+  purpose       = "VPC_PEERING"
+  address_type  = "INTERNAL"
+  prefix_length = 16
+  network       = google_compute_network.vpc_network.id
+}
+
+resource "google_service_networking_connection" "private_vpc_connection" {
+  //provider = google-beta
+
+  network                 = google_compute_network.vpc_network.id
+  service                 = "servicenetworking.googleapis.com"
+  reserved_peering_ranges = [google_compute_global_address.private_ip_address.name]
+}
 
 resource "google_sql_database_instance" "mysql_instance" {
   //provider = google-beta
@@ -174,14 +197,105 @@ resource "google_sql_database_instance" "mysql_instance" {
   database_version = "MYSQL_8_0"
   region = "us-central1"
   
-
   depends_on = [google_service_networking_connection.private_vpc_connection]
 
   settings {
     tier = "db-n1-standard-1"
-    //ip_configuration {
-      //ipv4_enabled    = false
-      //private_network = google_compute_network.private_network.id
+    disk_type = "PD_SSD"
+    disk_size = "10"
+    disk_autoresize = "true"
+    availability_type = "REGIONAL"
+    //root_password = "SuperRootPassword"
+    
+    location_preference {
+      zone = "us-central1-a"
+      //zone = "us-central1-b"
     }
-  }
+
+    ip_configuration {
+      ipv4_enabled    = true
+      //private_network = google_compute_network.vpc_network.id
+    }
+
+    backup_configuration {
+      enabled = true
+      binary_log_enabled = true
+      //transaction_log_retention_days = 7
+      location = "US"
+      start_time = "1:00"
+     /*  backup_retention_settings {
+        retained_backups = 7
+      } */
+
+    }
+
+    maintenance_window {
+      day = "7"
+      hour = "12"
+      update_track = "stable"
+    }
+
+
+  } //end of settings
+
+} //end of my_sql_instance
+
+resource "google_sql_user" "sql_user" {
+  name     = "nextcloud"
+  instance = google_sql_database_instance.mysql_instance.name
+  host     = "0.0.0.0/0"
+  password = "P@$$w0rd"
 }
+
+resource "google_sql_database" "mysql_database" {
+  name     = "nextcloud"
+  instance = google_sql_database_instance.mysql_instance.name
+  charset = "utf8mb4"
+  collation = "utf8mb4_general_ci"
+}
+
+
+
+//-------------------- ### REDIS Memory store ### ----------------------------------
+resource "google_redis_instance" "redis_cache" {
+  name           = "redis"
+  redis_version     = "REDIS_5_0"
+  memory_size_gb = 1
+  region = "us-central1"
+  tier = "STANDARD_HA"
+
+}
+
+
+
+//--------------------------- ### BUCKETs ### -------------------------------------
+resource "google_storage_bucket" "gcp_bucket" {
+  name          = "${var.project}-nextcloud-external-data"
+  location      = var.region
+  //uniform_bucket_level_access = false
+  //bucket_policy_only = {  name = false}
+}
+
+
+// --------------------------- ### HMAC KEY ### --------------------------------------
+
+//e1apPXPpME1dhW9DHG1ckD7/V2fTb4zsWd3zyEqf
+
+# Access key
+# GOOG1E3IHL2ETMOE6V6S6T6KRHNVKWWSZJN66TIRSW6NGQIRMNIIBPSVSRABI
+# Secret
+# e1apPXPpME1dhW9DHG1ckD7/V2fTb4zsWd3zyEqf
+
+
+/* resource "google_storage_hmac_key" "key" {
+  service_account_email = google_service_account.service_account.email
+}
+
+output "access_key" {
+  value = google_storage_hmac_key.key.access_id
+}
+
+output "secret_key" {
+  value     = google_storage_hmac_key.key.secret
+  sensitive = true
+} */
